@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP, ROUND_FLOOR, ROUND_CEILING
 import streamlit as st
 
-st.set_page_config(page_title="計算実務2級 全20問特訓ドリル", page_icon="📱", layout="centered")
+st.set_page_config(page_title="計算実務2級 全20パターン特訓ドリル", page_icon="📱", layout="centered")
 
 # =========================================================================
 # 1. 多言語翻訳辞書（全9言語対応）
