@@ -1,4 +1,5 @@
 import random
+import time
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP, ROUND_FLOOR, ROUND_CEILING
 import streamlit as st
@@ -203,18 +204,18 @@ TRANSLATION_DICT = {
         "（￥100未満切り上げ）": " (১০০ ইয়েন রাউন্ড আপ)",
         "（片落とし）": " (প্রথম দিন বাদ দিয়ে)",
         "（両端入れ）": " (উভয় দিন অন্তর্ভুক্ত)",
-        "原価をXとすると": "ক্রয়मूल্য X ধরা হলে",
-        "定価をXとすると": "ধার্যमूल্য X ধরা হলে",
-        "売上高をXとすると": "বিক্রয়मूल্য X ধরা হলে",
+        "原価をXとすると": "ক্রয়মূল্য X ধরা হলে",
+        "定価をXとすると": "ধার্যমূল্য X ধরা হলে",
+        "売上高をXとすると": "বিক্রয়মূল্য X ধরা হলে",
         "元金をXとすると": "আসল টাকা X ধরা হলে",
         "手形金額をXとすると": "বিল মূল্য X ধরা হলে",
         "ダース": " ডজন", "個": " টি", "か月": " মাস", "年": " বছর ",
         "日後": " দিন পর", "日前": " দিন আগে", "日間": " দিন", "日": " দিন",
-        "純量": "প্রকৃত ওজন ", "利息": "সুদ ", "定価": "ধার্যमूल্য ",
-        "原価": "ক্রয়मूल্য ", "売上高": "বিক্রয় ", "差額": "পার্থক্য ",
+        "純量": "প্রকৃত ওজন ", "利息": "সুদ ", "定価": "ধার্যমূল্য ",
+        "原価": "ক্রয়মূল্য ", "売上高": "বিক্রয় ", "差額": "পার্থক্য ",
         "割引料": "ডিসকাউন্ট চার্জ ", "手取金": "প্রাপ্ত অর্থ ",
         "値引時1kgあたり": "ছাড়ের পর প্রতি কেজি: ", "増量時1kgあたり": "পরিমাণ বৃদ্ধির পর প্রতি কেজি: ",
-        "値引有利": "মূল্যছাড় বেশি লাভজনক", "増量有利": "পরিমাণ বৃদ্ধি বেশি লাভজনক"
+        "値引有利": "मूल্যছাড় বেশি লাভজনক", "増量有利": "পরিমাণ বৃদ্ধি বেশি লাভজনক"
     }
 }
 
@@ -563,7 +564,6 @@ PATTERN_NAMES = [
     "⑰元利合計算出", "⑱元金逆算（年月）", "⑲割引日数逆算", "⑳割引率・日付・額面逆算"
 ]
 
-# 本試験（8問構成）の選出ルール
 MOCK_EXAM_SLOTS = [
     [0, 1],             # 問1: ①外貨 または ②風袋純量
     [2, 3, 4, 5],       # 問2: ③利益率, ④有利比較, ⑤損益逆算, ⑥目標利益
@@ -576,227 +576,261 @@ MOCK_EXAM_SLOTS = [
 ]
 
 # =========================================================================
-# 4. Streamlit UI
+# 4. セッション状態の初期化
+# =========================================================================
+if "is_started" not in st.session_state:
+    st.session_state.is_started = False
+if "current_q" not in st.session_state:
+    st.session_state.current_q = None
+if "answered" not in st.session_state:
+    st.session_state.answered = False
+if "is_correct" not in st.session_state:
+    st.session_state.is_correct = False
+if "mock_questions" not in st.session_state:
+    st.session_state.mock_questions = []
+if "mock_idx" not in st.session_state:
+    st.session_state.mock_idx = 0
+if "mock_score" not in st.session_state:
+    st.session_state.mock_score = 0
+if "start_time" not in st.session_state:
+    st.session_state.start_time = 0.0
+if "elapsed_str" not in st.session_state:
+    st.session_state.elapsed_str = ""
+
+def generate_mock_questions():
+    q_list = []
+    for slot in MOCK_EXAM_SLOTS:
+        p_idx = random.choice(slot)
+        gen = generators[p_idx]
+        q_list.append(gen(random.randint(1, 100)))
+    return q_list
+
+def pick_next_question(app_mode, chosen_indices):
+    if app_mode == "🎲 全20パターンからランダム":
+        gen = random.choice(generators)
+        return gen(random.randint(1, 100))
+    elif app_mode == "🎯 パターンを複数選んで練習":
+        if not chosen_indices:
+            return None
+        p_idx = random.choice(chosen_indices)
+        gen = generators[p_idx]
+        return gen(random.randint(1, 100))
+    elif app_mode == "📝 本試験モード（8問演習）":
+        return st.session_state.mock_questions[st.session_state.mock_idx]
+
+# =========================================================================
+# 5. UIフロー制御
 # =========================================================================
 st.markdown("### 📱 計算実務2級 ドリル")
 
-# 設定コンテナ
-with st.container():
+# --- 画面A: 初期設定（スタート前） ---
+if not st.session_state.is_started:
+    st.info("電卓を準備し、言語と出題モードを選んでスタートしてください。")
+
     col_lang, col_mode = st.columns([1, 1])
     with col_lang:
         selected_lang = st.selectbox("🌐 解説の言語", LANG_OPTIONS, index=4)
     with col_mode:
         app_mode = st.selectbox("🎯 出題モード", ["🎲 全20パターンからランダム", "📝 本試験モード（8問演習）", "🎯 パターンを複数選んで練習"])
 
-# セッション状態の初期化
-if "current_q" not in st.session_state:
-    st.session_state.current_q = None
-    st.session_state.answered = False
-    st.session_state.is_correct = False
-    st.session_state.prev_mode = app_mode
-    # 本試験モード用
-    st.session_state.mock_questions = []
-    st.session_state.mock_idx = 0
-    st.session_state.mock_score = 0
-
-# パターン複数選択モード時のチェックボックス
-chosen_indices = []
-if app_mode == "🎯 パターンを複数選んで練習":
-    with st.expander("📚 練習したいパターンを選択（複数選択可）", expanded=True):
+    chosen_indices = []
+    if app_mode == "🎯 パターンを複数選んで練習":
+        st.write("▼ 練習したいパターンを選択してください：")
         col1, col2 = st.columns(2)
         for i, p_name in enumerate(PATTERN_NAMES):
             target_col = col1 if i < 10 else col2
             with target_col:
-                if st.checkbox(p_name, value=(i in [2, 3, 18, 19]), key=f"pat_chk_{i}"):
+                if st.checkbox(p_name, value=(i in [2, 3, 18, 19]), key=f"init_chk_{i}"):
                     chosen_indices.append(i)
 
-# モード変更検知
-if st.session_state.prev_mode != app_mode:
-    st.session_state.prev_mode = app_mode
-    st.session_state.current_q = None
-    st.session_state.mock_questions = []
-    st.session_state.mock_idx = 0
-    st.session_state.mock_score = 0
-
-def init_mock_exam():
-    """本試験8問セットを生成"""
-    q_list = []
-    for slot in MOCK_EXAM_SLOTS:
-        p_idx = random.choice(slot)
-        gen = generators[p_idx]
-        q_list.append(gen(random.randint(1, 100)))
-    st.session_state.mock_questions = q_list
-    st.session_state.mock_idx = 0
-    st.session_state.mock_score = 0
-
-def new_question():
-    if app_mode == "🎲 全20パターンからランダム":
-        gen = random.choice(generators)
-        st.session_state.current_q = gen(random.randint(1, 100))
-    elif app_mode == "🎯 パターンを複数選んで練習":
-        if not chosen_indices:
-            st.session_state.current_q = None
-            return
-        p_idx = random.choice(chosen_indices)
-        gen = generators[p_idx]
-        st.session_state.current_q = gen(random.randint(1, 100))
-    elif app_mode == "📝 本試験モード（8問演習）":
-        if not st.session_state.mock_questions or st.session_state.mock_idx >= len(st.session_state.mock_questions):
-            init_mock_exam()
-        st.session_state.current_q = st.session_state.mock_questions[st.session_state.mock_idx]
-    
-    st.session_state.answered = False
-
-if st.session_state.current_q is None:
-    new_question()
-
-# 問題が選択されていない場合の警告
-if st.session_state.current_q is None and app_mode == "🎯 パターンを複数選んで練習":
-    st.warning("⚠️ 上のリストから練習したいパターンを1つ以上選択してください。")
-    st.stop()
-
-cat, pat, q_text, correct_ans, f_text, input_type = st.session_state.current_q
-
-# 本試験モードの場合は進行状況（第X問 / 全8問）を表示
-if app_mode == "📝 本試験モード（8問演習）":
-    st.progress((st.session_state.mock_idx + 1) / 8)
-    st.caption(f"第 {st.session_state.mock_idx + 1} 問 / 全 8 問 （現在の正解数: {st.session_state.mock_score} 問）")
-
-# 問題文表示
-st.info(f"**【{pat}】**\n\n{q_text}")
-
-# ---------------------------------------------------------
-# 入力フォーム（割・分を完全にセパレート化）
-# ---------------------------------------------------------
-user_clean = ""
-
-if input_type == "wari_bu": # ③利益率（何割何分）
-    st.write("**利益率を入力してください：**")
-    col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
-    with col1:
-        w_in = st.text_input("割の数字", placeholder="例: 2", label_visibility="collapsed")
-    with col2:
-        st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>割</p>", unsafe_allow_html=True)
-    with col3:
-        b_in = st.text_input("分の数字", placeholder="例: 8", label_visibility="collapsed")
-    with col4:
-        st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>分</p>", unsafe_allow_html=True)
-    user_clean = f"{w_in.strip()}_{b_in.strip()}"
-
-elif input_type == "comparison": # ④値引と増量
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        choice = st.radio("どちらが有利？", ["値引", "増量"], horizontal=True)
-    with col2:
-        val_input = st.text_input("有利な金額（￥）", placeholder="例: 1064")
-    user_clean = f"{choice}_{val_input.replace(',', '').replace('￥', '').replace('円', '').strip()}"
-
-elif input_type == "year_month": # ⑮借入期間（年・月）
-    col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
-    with col1:
-        y_in = st.text_input("年の数字", placeholder="例: 2", label_visibility="collapsed")
-    with col2:
-        st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>年</p>", unsafe_allow_html=True)
-    with col3:
-        m_in = st.text_input("か月の数字", placeholder="例: 8", label_visibility="collapsed")
-    with col4:
-        st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>か月</p>", unsafe_allow_html=True)
-    user_clean = f"{y_in.strip()}_{m_in.strip()}"
-
-elif input_type == "percent": # ⑯貸付利率 / ⑳割引率
-    u_in = st.text_input("利率（％）", placeholder="例: 4.2")
-    user_clean = u_in.replace("%", "").replace("％", "").strip()
-
-elif input_type == "days": # ⑲手形割引日数
-    u_in = st.text_input("割引日数（日）", placeholder="例: 80")
-    user_clean = u_in.replace("日", "").replace("日間", "").strip()
-
-elif input_type == "date": # ⑳満期日
-    u_in = st.text_input("満期日（何月何日）", placeholder="例: 9月13日")
-    user_clean = u_in.replace(" ", "").strip()
-
-elif input_type in ["usd", "eur"]: # 為替
-    symbol = "€" if input_type == "eur" else "＄"
-    u_in = st.text_input(f"金額（{symbol}）", placeholder="例: 6702.95")
-    user_clean = u_in.replace(",", "").replace("$", "").replace("＄", "").replace("€", "").strip()
-
-else: # yen（金額）
-    u_in = st.text_input("金額を入力（￥）", placeholder="例: 3610169")
-    user_clean = u_in.replace(",", "").replace("￥", "").replace("円", "").strip()
-
-# ---------------------------------------------------------
-# 判定処理
-# ---------------------------------------------------------
-if st.button("判定する", type="primary", use_container_width=True):
-    st.session_state.answered = True
-    
-    if input_type in ["wari_bu", "year_month"]:
-        c_parts = correct_ans.split("_")
-        u_parts = user_clean.split("_")
-        st.session_state.is_correct = (len(u_parts) == 2 and u_parts[0] == c_parts[0] and u_parts[1] == c_parts[1])
-    elif input_type == "comparison":
-        c_choice, c_diff = correct_ans.split("_")
-        u_parts = user_clean.split("_")
-        st.session_state.is_correct = (len(u_parts) == 2 and u_parts[0] == c_choice and u_parts[1] == c_diff)
-    else:
-        st.session_state.is_correct = (user_clean == correct_ans)
-
-    # 本試験モードの場合はスコア加算
-    if app_mode == "📝 本試験モード（8問演習）" and st.session_state.is_correct:
-        st.session_state.mock_score += 1
-
-# 結果と解説
-if st.session_state.answered:
-    if st.session_state.is_correct:
-        st.success("🎉 正解です！ お見事！")
-    else:
-        if input_type == "wari_bu":
-            w, b = correct_ans.split("_")
-            disp = f"{w}割{b}分"
-        elif input_type == "year_month":
-            y, m = correct_ans.split("_")
-            disp = f"{y}年{m}か月"
-        elif input_type == "comparison":
-            w, d = correct_ans.split("_")
-            disp = f"（{w}）の方が ￥{int(d):,} 有利"
-        elif input_type == "percent":
-            disp = f"{correct_ans} ％"
-        elif input_type == "days":
-            disp = f"{correct_ans} 日"
-        elif input_type == "eur":
-            disp = f"€{Decimal(correct_ans):,}"
-        elif input_type == "usd":
-            disp = f"＄{Decimal(correct_ans):,}"
-        elif input_type == "yen":
-            disp = f"￥{int(correct_ans):,}"
+    st.write("")
+    if st.button("🚀 スタート", type="primary", use_container_width=True):
+        if app_mode == "🎯 パターンを複数選んで練習" and not chosen_indices:
+            st.warning("⚠️ 練習したいパターンを1つ以上選んでください。")
         else:
-            disp = correct_ans
+            st.session_state.selected_lang = selected_lang
+            st.session_state.app_mode = app_mode
+            st.session_state.chosen_indices = chosen_indices
+            st.session_state.is_started = True
+            st.session_state.answered = False
             
-        st.error(f"❌ 不正解... 正解は: **{disp}** です")
-
-    st.markdown("### 💡 計算式・解説")
-    st.write(f"**【日本語】** {f_text}")
-    
-    if selected_lang != "日本語のみ":
-        trans_res = translate_explanation(f_text, selected_lang)
-        st.info(f"**【{selected_lang}】**\n\n{trans_res}")
-
-    # 次の問題への進み方
-    if app_mode == "📝 本試験モード（8問演習）":
-        if st.session_state.mock_idx < 7:
-            if st.button("次の第" + str(st.session_state.mock_idx + 2) + "問へ ➔", use_container_width=True):
-                st.session_state.mock_idx += 1
-                new_question()
-                st.rerun()
-        else:
-            final_score = st.session_state.mock_score * 4
-            st.balloons()
-            st.markdown(f"### 🏆 8問終了！\n**正解数: {st.session_state.mock_score} / 8 問 （得点: {final_score} / 32 点）**")
-            if st.button("もう一度最初から解く 🔄", use_container_width=True):
-                init_mock_exam()
-                new_question()
-                st.rerun()
-    else:
-        if st.button("次の問題へ ➔", use_container_width=True):
-            new_question()
+            # 本試験モードの場合はタイマー開始＆8問生成
+            if app_mode == "📝 本試験モード（8問演習）":
+                st.session_state.mock_questions = generate_mock_questions()
+                st.session_state.mock_idx = 0
+                st.session_state.mock_score = 0
+                st.session_state.start_time = time.time()
+            
+            st.session_state.current_q = pick_next_question(app_mode, chosen_indices)
             st.rerun()
+
+# --- 画面B: 問題演習画面 ---
+else:
+    # 画面上部のミニヘッダー
+    head_c1, head_c2 = st.columns([3, 1])
+    with head_c1:
+        st.caption(f"モード: {st.session_state.app_mode} | 解説: {st.session_state.selected_lang}")
+    with head_c2:
+        if st.button("⚙️ 設定に戻る", use_container_width=True):
+            st.session_state.is_started = False
+            st.rerun()
+
+    cat, pat, q_text, correct_ans, f_text, input_type = st.session_state.current_q
+
+    # 本試験モードのプログレスバー
+    if st.session_state.app_mode == "📝 本試験モード（8問演習）":
+        st.progress((st.session_state.mock_idx + 1) / 8)
+        st.caption(f"第 {st.session_state.mock_idx + 1} 問 / 全 8 問")
+
+    # 問題文
+    st.info(f"**【{pat}】**\n\n{q_text}")
+
+    # 入力フォーム（割・分セパレート等）
+    user_clean = ""
+
+    if input_type == "wari_bu": # ③利益率（何割何分）
+        st.write("**利益率を入力：**")
+        col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
+        with col1:
+            w_in = st.text_input("割", placeholder="2", label_visibility="collapsed")
+        with col2:
+            st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>割</p>", unsafe_allow_html=True)
+        with col3:
+            b_in = st.text_input("分", placeholder="8", label_visibility="collapsed")
+        with col4:
+            st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>分</p>", unsafe_allow_html=True)
+        user_clean = f"{w_in.strip()}_{b_in.strip()}"
+
+    elif input_type == "comparison": # ④値引と増量
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            choice = st.radio("どちらが有利？", ["値引", "増量"], horizontal=True)
+        with col2:
+            val_input = st.text_input("有利な金額（￥）", placeholder="例: 1064")
+        user_clean = f"{choice}_{val_input.replace(',', '').replace('￥', '').replace('円', '').strip()}"
+
+    elif input_type == "year_month": # ⑮借入期間（年・月）
+        col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
+        with col1:
+            y_in = st.text_input("年", placeholder="2", label_visibility="collapsed")
+        with col2:
+            st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>年</p>", unsafe_allow_html=True)
+        with col3:
+            m_in = st.text_input("か月", placeholder="8", label_visibility="collapsed")
+        with col4:
+            st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>か月</p>", unsafe_allow_html=True)
+        user_clean = f"{y_in.strip()}_{m_in.strip()}"
+
+    elif input_type == "percent":
+        u_in = st.text_input("利率（％）", placeholder="例: 4.2")
+        user_clean = u_in.replace("%", "").replace("％", "").strip()
+
+    elif input_type == "days":
+        u_in = st.text_input("割引日数（日）", placeholder="例: 80")
+        user_clean = u_in.replace("日", "").replace("日間", "").strip()
+
+    elif input_type == "date":
+        u_in = st.text_input("満期日（何月何日）", placeholder="例: 9月13日")
+        user_clean = u_in.replace(" ", "").strip()
+
+    elif input_type in ["usd", "eur"]:
+        symbol = "€" if input_type == "eur" else "＄"
+        u_in = st.text_input(f"金額（{symbol}）", placeholder="例: 6702.95")
+        user_clean = u_in.replace(",", "").replace("$", "").replace("＄", "").replace("€", "").strip()
+
+    else:
+        u_in = st.text_input("金額を入力（￥）", placeholder="例: 3610169")
+        user_clean = u_in.replace(",", "").replace("￥", "").replace("円", "").strip()
+
+    # 判定
+    if not st.session_state.answered:
+        if st.button("判定する", type="primary", use_container_width=True):
+            st.session_state.answered = True
+            
+            if input_type in ["wari_bu", "year_month"]:
+                c_parts = correct_ans.split("_")
+                u_parts = user_clean.split("_")
+                st.session_state.is_correct = (len(u_parts) == 2 and u_parts[0] == c_parts[0] and u_parts[1] == c_parts[1])
+            elif input_type == "comparison":
+                c_choice, c_diff = correct_ans.split("_")
+                u_parts = user_clean.split("_")
+                st.session_state.is_correct = (len(u_parts) == 2 and u_parts[0] == c_choice and u_parts[1] == c_diff)
+            else:
+                st.session_state.is_correct = (user_clean == correct_ans)
+
+            if st.session_state.app_mode == "📝 本試験モード（8問演習）" and st.session_state.is_correct:
+                st.session_state.mock_score += 1
+            st.rerun()
+
+    # 結果と解説表示
+    if st.session_state.answered:
+        if st.session_state.is_correct:
+            st.success("🎉 正解です！")
+        else:
+            if input_type == "wari_bu":
+                w, b = correct_ans.split("_")
+                disp = f"{w}割{b}分"
+            elif input_type == "year_month":
+                y, m = correct_ans.split("_")
+                disp = f"{y}年{m}か月"
+            elif input_type == "comparison":
+                w, d = correct_ans.split("_")
+                disp = f"（{w}）の方が ￥{int(d):,} 有利"
+            elif input_type == "percent":
+                disp = f"{correct_ans} ％"
+            elif input_type == "days":
+                disp = f"{correct_ans} 日"
+            elif input_type == "eur":
+                disp = f"€{Decimal(correct_ans):,}"
+            elif input_type == "usd":
+                disp = f"＄{Decimal(correct_ans):,}"
+            elif input_type == "yen":
+                disp = f"￥{int(correct_ans):,}"
+            else:
+                disp = correct_ans
+                
+            st.error(f"❌ 不正解... 正解は: **{disp}** です")
+
+        st.markdown("### 💡 計算式・解説")
+        st.write(f"**【日本語】** {f_text}")
+        
+        if st.session_state.selected_lang != "日本語のみ":
+            trans_res = translate_explanation(f_text, st.session_state.selected_lang)
+            st.info(f"**【{st.session_state.selected_lang}】**\n\n{trans_res}")
+
+        # 次へボタン
+        if st.session_state.app_mode == "📝 本試験モード（8問演習）":
+            if st.session_state.mock_idx < 7:
+                if st.button(f"第 {st.session_state.mock_idx + 2} 問へ ➔", use_container_width=True):
+                    st.session_state.mock_idx += 1
+                    st.session_state.answered = False
+                    st.session_state.current_q = pick_next_question(st.session_state.app_mode, st.session_state.chosen_indices)
+                    st.rerun()
+            else:
+                # 8問終了時の集計
+                total_sec = int(time.time() - st.session_state.start_time)
+                mins = total_sec // 60
+                secs = total_sec % 60
+                st.session_state.elapsed_str = f"{mins}分{secs}秒"
+                final_score = st.session_state.mock_score * 4
+
+                st.balloons()
+                st.markdown("---")
+                st.markdown(f"### 🏆 模擬試験 結果発表\n"
+                            f"* **所要時間**: {st.session_state.elapsed_str}\n"
+                            f"* **正解数**: **{st.session_state.mock_score} / 8 問**\n"
+                            f"* **得点**: **{final_score} / 32 点** （各問4点）")
+
+                if st.button("もう一度最初から挑戦する 🔄", use_container_width=True):
+                    st.session_state.mock_questions = generate_mock_questions()
+                    st.session_state.mock_idx = 0
+                    st.session_state.mock_score = 0
+                    st.session_state.start_time = time.time()
+                    st.session_state.answered = False
+                    st.session_state.current_q = pick_next_question(st.session_state.app_mode, st.session_state.chosen_indices)
+                    st.rerun()
+        else:
+            if st.button("次の問題へ ➔", use_container_width=True):
+                st.session_state.answered = False
+                st.session_state.current_q = pick_next_question(st.session_state.app_mode, st.session_state.chosen_indices)
+                st.rerun()
