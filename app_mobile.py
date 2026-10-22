@@ -223,7 +223,7 @@ TRANSLATION_DICT = {
         "原価": "ক্রয়মূল্য ", "売上高": "বিক্রয় ", "差額": "পার্থক্য ",
         "割引料": "ডিসকাউন্ট চার্জ ", "手取金": "প্রাপ্ত অর্থ ",
         "値引時1kgあたり": "ছাড়ের পর প্রতি কেজি: ", "増量時1kgあたり": "পরিমাণ বৃদ্ধির পর প্রতি কেজি: ",
-        "値引有利": "मूल্যছাড় বেশি লাভজনক", "増量有利": "পরিমাণ বৃদ্ধি বেশি লাভজনক",
+        "値引有利": "মূল্যছাড় বেশি লাভজনক", "増量有利": "পরিমাণ বৃদ্ধি বেশি লাভজনক",
         "売り手にとって": "বিক্রেতার জন্য", "買い手にとって": "ক্রেতার জন্য"
     }
 }
@@ -266,48 +266,84 @@ def get_date_pair(start_month: int, start_day: int, days: int, is_ryotan: bool):
 modes_list = ["切り上げ", "四捨五入", "切り捨て"]
 
 # =========================================================================
-# 3. 全20パターンの個別生成ロジック（厳密な割り切れ＆売り手/買い手対応版）
+# 3. 全20パターンの個別生成ロジック（指定順・途中端数ゼロ＆リアル数値版）
 # =========================================================================
-def gen_p1(idx):
-    mode = modes_list[idx % 3]
+
+# --- 【1. お金の貸し借りに係るもの（単利利息）】 ---
+# ① 借入期間（年月）逆算
+def gen_q1(idx):
+    principal = (random.randint(12, 65) * 10 + random.choice([2, 3, 4, 6, 7, 8])) * 12000
+    rate = Decimal(random.choice([24, 30, 36, 42, 48, 54])) / Decimal('10')
+    years = random.randint(1, 3)
+    months = random.randint(1, 11)
+    total_months = years * 12 + months
+    interest = int(Decimal(principal) * (rate / Decimal('100')) * Decimal(total_months) / Decimal('12'))
+    total_amt = principal + interest
+    q_text = f"￥{principal:,}を年利率{rate}％で借り入れ、期日に元利合計￥{total_amt:,}を支払った。借入期間は、何年何か月ですか。"
+    f_text = f"(￥{total_amt:,}－￥{principal:,})÷(￥{principal:,}×{rate/100:.3f})×12か月＝{total_months}か月＝{years}年{months}か月"
+    return "単利利息", "①借入期間（年月）逆算", q_text, f"{years}_{months}", f_text, "year_month"
+
+# ② 貸付利率逆算（片落とし）
+def gen_q2(idx):
+    m_factor = random.randint(22, 125)
+    if m_factor % 5 == 0:
+        m_factor += 2
+    principal = m_factor * 73000
+    days = random.randint(13, 28) * 5
+    rate_val = random.randint(22, 58)
+    rate = Decimal(rate_val) / Decimal('10')
+    interest = int(Decimal(principal) * (rate / Decimal('100')) * Decimal(days) / Decimal('365'))
+    total_amt = principal + interest
+    sm = random.randint(3, 8)
+    sd = random.randint(5, 20)
+    d1, d2, b_str = get_date_pair(sm, sd, days, is_ryotan=False)
+    q_text = f"元金￥{principal:,}を{d1.month}月{d1.day}日から{d2.month}月{d2.day}日まで貸し付け、期日に元利合計￥{total_amt:,}を受け取った。貸付利率は年何パーセントですか。（片落とし）"
+    f_text = f"{d1.month}/{d1.day}〜{d2.month}/{d2.day}（片落とし）＝{days}日間 / 利息￥{interest:,}÷(￥{principal:,}×{days}日÷365日)＝{rate}％"
+    return "単利利息", "②貸付利率逆算（片落とし）", q_text, str(rate), f_text, "percent"
+
+# ③ 元利合計算出
+def gen_q3(idx):
     if idx % 2 == 0:
-        unit_base = Decimal(random.randint(2500, 5500)) / Decimal('100')
-        gross_price = unit_base * Decimal('12') + Decimal(random.choice(['0.10', '0.20', '0.30', '0.50']))
-        qty_doz = random.randint(35, 85) * 10 + random.choice([2, 5, 7])
-        profit_pct = random.randint(12, 26)
-        rate = Decimal(random.randint(14200, 15800)) / Decimal('100')
-        raw_val = (gross_price / Decimal('12')) * Decimal(qty_doz) * (Decimal('1') + Decimal(profit_pct)/Decimal('100')) * rate
-        ans = round_yen(raw_val, mode)
-        q_text = f"1グロス＄{gross_price:.2f}の商品を{qty_doz:,}ダース販売するため、原価の{profit_pct}％の利益を見込んで定価をつけた。定価は円貨でいくらですか。ただし、＄1＝￥{rate:.2f}とする。（計算の最終で円未満{mode}）"
-        f_text = f"＄{gross_price:.2f}÷12×{qty_doz:,}ダース×(1＋{profit_pct/100:.2f})×￥{rate:.2f}＝￥{raw_val:,.3f} → ￥{ans:,}（円未満{mode}）"
+        principal = (random.randint(35, 95) * 10 + random.choice([2, 4, 5, 6, 8])) * 1000
+        rate = Decimal(random.randint(22, 54)) / Decimal('10')
+        days = random.randint(65, 135)
+        sm = random.randint(3, 8)
+        sd = random.randint(5, 22)
+        d1, d2, b_str = get_date_pair(sm, sd, days, is_ryotan=False)
+        raw_total = Decimal(principal) + Decimal(principal) * (rate / Decimal('100')) * Decimal(days) / Decimal('365')
+        ans = round_yen(raw_total, "四捨五入")
+        q_text = f"￥{principal:,}を年利率{rate}％で{d1.month}月{d1.day}日から{d2.month}月{d2.day}日まで貸し付けた。期日に受け取る元利合計はいくらですか。（片落とし、円未満四捨五入）"
+        f_text = f"{days}日間 / ￥{principal:,}＋利息＝￥{raw_total:,.3f} → ￥{ans:,}"
     else:
-        doz_price = Decimal(random.randint(4500, 48000)) / Decimal('100')
-        qty_pcs = random.randint(120, 580) * 12
-        profit_pct = random.randint(12, 25)
-        rate = Decimal(random.randint(14200, 15800)) / Decimal('100')
-        raw_val = (doz_price / Decimal('12')) * Decimal(qty_pcs) * (Decimal('1') + Decimal(profit_pct)/Decimal('100')) * rate
-        ans = round_yen(raw_val, mode)
-        q_text = f"1ダース＄{doz_price:.2f}の商品を{qty_pcs:,}個販売するため、原価の{profit_pct}％の利益を見込んで定価をつけた。定価は円貨でいくらですか。ただし、＄1＝￥{rate:.2f}とする。（計算の最終で円未満{mode}）"
-        f_text = f"＄{doz_price:.2f}÷12×{qty_pcs:,}個×(1＋{profit_pct/100:.2f})×￥{rate:.2f}＝￥{raw_val:,.3f} → ￥{ans:,}（円未満{mode}）"
-    return "1.定価算出", "①外貨・グロス/ダース換算", q_text, str(ans), f_text, "yen"
+        principal = (random.randint(15, 58) * 10 + random.choice([2, 3, 4, 6, 7, 8])) * 12000
+        rate = Decimal(random.choice([24, 30, 36, 42, 48])) / Decimal('10')
+        years = random.randint(1, 3)
+        months = random.randint(1, 11)
+        total_months = years * 12 + months
+        interest = int(Decimal(principal) * (rate / Decimal('100')) * Decimal(total_months) / Decimal('12'))
+        ans = principal + interest
+        q_text = f"￥{principal:,}を年利率{rate}％で{years}年{months}か月間貸し付けた。期日に受け取る元利合計はいくらですか。"
+        f_text = f"￥{principal:,}＋利息￥{interest:,}＝￥{ans:,}"
+    return "単利利息", "③元利合計算出", q_text, str(ans), f_text, "yen"
 
-def gen_p2(idx):
-    mode = modes_list[idx % 3]
-    total_kg = random.randint(215, 785) * 10 + random.choice([5, 0])
-    tare_pct = random.randint(2, 5)
-    loss_pct = random.randint(1, 3)
-    unit_price = random.randint(620, 980)
-    profit_pct = random.randint(21, 29)
-    net_kg = Decimal(total_kg) * (Decimal('1') - Decimal(tare_pct)/Decimal('100')) * (Decimal('1') - Decimal(loss_pct)/Decimal('100'))
-    raw_val = Decimal(unit_price) * net_kg * (Decimal('1') + Decimal(profit_pct)/Decimal('100'))
-    ans = round_yen(raw_val, mode)
-    q_text = f"総量{total_kg:,}kg、風袋{tare_pct}％、減量は風袋を除いた量の{loss_pct}％の商品を、純量1kgにつき￥{unit_price:,}で仕入れ、仕入原価の{profit_pct}％の利益を見込んで定価をつけた。定価はいくらですか。（計算の最終で円未満{mode}）"
-    f_text = f"{total_kg:,}kg×(1－{tare_pct/100:.2f})×(1－{loss_pct/100:.2f})＝純量{net_kg}kg / ￥{unit_price:,}×{net_kg}kg×(1＋{profit_pct/100:.2f})＝￥{raw_val:,.3f} → ￥{ans:,}（円未満{mode}）"
-    return "1.定価算出", "②風袋・減量からの純量計算", q_text, str(ans), f_text, "yen"
+# ④ 元金逆算（年月）
+def gen_q4(idx):
+    principal = (random.randint(12, 48) * 10 + random.choice([2, 3, 4, 6, 7, 8])) * 20000
+    rate = Decimal(random.choice([24, 30, 36, 42, 48])) / Decimal('10')
+    years = random.randint(1, 3)
+    months = random.choice([2, 3, 4, 6, 8, 9, 10])
+    total_months = years * 12 + months
+    interest = int(Decimal(principal) * (rate / Decimal('100')) * Decimal(total_months) / Decimal('12'))
+    total_amt = principal + interest
+    q_text = f"年利率{rate}％で{years}年{months}か月間借り入れ、期日に元利合計￥{total_amt:,}を支払った。元金はいくらですか。"
+    f_text = f"元金をXとすると、X×(1＋{rate/100:.3f}×{total_months}か月÷12か月)＝￥{total_amt:,} → 元金￥{principal:,}"
+    return "単利利息", "④元金逆算（年月）", q_text, str(principal), f_text, "yen"
 
-def gen_p3(idx):
-    total_cost = random.randint(45, 98) * 10000
-    expenses = random.randint(15, 85) * 1000
+# --- 【2. 商品の原価や利益、売価に係るもの】 ---
+# ⑤ 諸掛込原価の利益率
+def gen_q5(idx):
+    total_cost = (random.randint(45, 95) * 10 + random.choice([2, 4, 5, 6, 8])) * 1000
+    expenses = (random.randint(15, 65) * 10 + random.choice([0, 5])) * 100
     cost = total_cost - expenses
     rate_wari = random.randint(1, 3)
     rate_bu = random.randint(1, 9)
@@ -315,46 +351,20 @@ def gen_p3(idx):
     selling_price = int(Decimal(total_cost) * (Decimal('1') + profit_rate))
     q_text = f"原価￥{cost:,}の商品を仕入れ、仕入諸掛￥{expenses:,}を支払った。この商品を￥{selling_price:,}で販売すると、利益率は諸掛込原価の何割何分ですか。"
     f_text = f"｛￥{selling_price:,}－(￥{cost:,}＋￥{expenses:,})｝÷(￥{cost:,}＋￥{expenses:,})＝{profit_rate:.2f}＝{rate_wari}割{rate_bu}分"
-    return "2.損益・売買", "③諸掛込原価の利益率", q_text, f"{rate_wari}_{rate_bu}", f_text, "wari_bu"
+    return "損益・売買", "⑤諸掛込原価の利益率", q_text, f"{rate_wari}_{rate_bu}", f_text, "wari_bu"
 
-# ④ 値引と増量の有利比較（売り手／買い手をランダム出題＆整数割り切れ設計）
-def gen_p4(idx):
-    base_kg = random.choice([1, 10, 15])
-    inc_pct = random.choice([2, 4, 5, 8])
-    disc_pct = inc_pct - random.choice([1, -1])
-    if disc_pct <= 1: disc_pct = 2
-    multiplier = random.randint(4, 12) * 100
-    base_price = multiplier * base_kg * (100 + inc_pct)
-    price_disc_per_kg = (base_price * (100 - disc_pct)) // (100 * base_kg)
-    price_inc_per_kg = (base_price * 100) // (base_kg * (100 + inc_pct))
-    diff = abs(price_disc_per_kg - price_inc_per_kg)
-    
-    # 売り手 or 買い手を交互/ランダムに出題
-    is_buyer = (idx % 2 == 1)
-    target_person = "買い手にとって" if is_buyer else "売り手にとって"
-    
-    if is_buyer:
-        # 買い手は1kgあたりが「安い」方が有利
-        winner = "値引" if price_disc_per_kg < price_inc_per_kg else "増量"
-    else:
-        # 売り手は1kgあたりが「高い」方が有利
-        winner = "値引" if price_disc_per_kg > price_inc_per_kg else "増量"
-        
-    q_text = f"{base_kg}kgにつき￥{base_price:,}の商品を販売するとき、値段を{disc_pct}％引きするのと数量を{inc_pct}％増量するのとでは、1kgあたりで比較すると、{target_person}どちらがいくら有利ですか。"
-    f_text = f"値引時1kgあたり￥{price_disc_per_kg:,}、増量時1kgあたり￥{price_inc_per_kg:,} → 差額￥{diff:,}（{target_person}、{winner}有利）"
-    return "2.損益・売買", "④値引と増量の有利比較", q_text, f"{winner}_{diff}", f_text, "comparison"
-
-def gen_p5(idx):
+# ⑥ 損益からの定価・原価逆算
+def gen_q6(idx):
     wari = random.randint(1, 2)
     bu = random.randint(1, 8)
     disc_rate = Decimal(wari * 10 + bu) / Decimal('100')
-    cost = random.randint(15, 60) * 100000
-    markup = random.randint(10, 30) * 100000
+    cost = (random.randint(12, 65) * 10 + random.choice([2, 4, 5, 6, 8])) * 10000
+    markup = (random.randint(8, 28) * 10 + random.choice([2, 4, 5, 6, 8])) * 10000
     list_price = cost + markup
     selling_price = int(Decimal(list_price) * (Decimal('1') - disc_rate))
     diff = selling_price - cost
     if diff == 0:
-        markup += 100000
+        markup += 120000
         list_price = cost + markup
         selling_price = int(Decimal(list_price) * (Decimal('1') - disc_rate))
         diff = selling_price - cost
@@ -364,21 +374,83 @@ def gen_p5(idx):
     ans = list_price if ask_target == "定価" else cost
     q_text = f"原価に￥{markup:,}の利益を見込んで定価をつけ、定価の{wari}割{bu}分引きで販売したところ{pl_str}になった。この商品の{ask_target}はいくらですか。"
     f_text = f"原価をXとすると、(X＋￥{markup:,})×(1－{disc_rate:.2f})－X＝{'￥' if is_profit else '△￥'}{abs(diff):,} → 原価￥{cost:,}、定価￥{list_price:,}"
-    return "2.損益・売買", "⑤損益からの定価・原価逆算", q_text, str(ans), f_text, "yen"
+    return "損益・売買", "⑥損益からの定価・原価逆算", q_text, str(ans), f_text, "yen"
 
-def gen_p6(idx):
-    disc_pct = random.choice([5, 10, 15, 20])
-    profit_pct = random.choice([14, 16, 18, 20, 25])
+# ⑦ 目標利益からの定価逆算
+def gen_q7(idx):
+    disc_pct = random.choice([4, 5, 8, 10, 12, 15, 20])
+    profit_pct = random.choice([12, 14, 15, 16, 18, 20, 24, 25])
     denom = 100 - disc_pct
-    base_factor = random.randint(20, 80) * 10000
-    cost = base_factor * denom // 100
-    list_price = base_factor * (100 + profit_pct) // 100
+    base_factor = (random.randint(4, 14) * 10 + random.choice([2, 3, 6, 7, 8])) * 100
+    cost = base_factor * denom
+    list_price = base_factor * (100 + profit_pct)
     q_text = f"仕入原価￥{cost:,}の商品を定価の{disc_pct}％引きで売っても、なお仕入原価の{profit_pct}％の利益を得たい。定価をいくらにすればよいですか。"
     f_text = f"定価をXとすると、X×(1－{disc_pct/100:.2f})＝￥{cost:,}×(1＋{profit_pct/100:.2f}) → 定価￥{list_price:,}"
-    return "2.損益・売買", "⑥目標利益からの定価逆算", q_text, str(list_price), f_text, "yen"
+    return "損益・売買", "⑦目標利益からの定価逆算", q_text, str(list_price), f_text, "yen"
 
-def gen_p7(idx):
-    trade_val = random.randint(25, 90) * 1000000
+# --- 【3. 手形に係るもの（手形割引）】 ---
+# ⑧ 割引日数逆算
+def gen_q8(idx):
+    m_factor = random.randint(22, 115)
+    if m_factor % 5 == 0:
+        m_factor += 1
+    face_val = m_factor * 73000
+    days = random.randint(45, 115)
+    rate = Decimal(random.choice([25, 30, 35, 40, 45])) / Decimal('10')
+    discount = int(Decimal(face_val) * (rate / Decimal('100')) * Decimal(days) / Decimal('365'))
+    proceeds = face_val - discount
+    q_text = f"額面￥{face_val:,}の手形を、割引率年{rate}％で割り引き、手取金￥{proceeds:,}を受け取った。割引日数は何日ですか。"
+    f_text = f"割引料￥{discount:,}÷(￥{face_val:,}×{rate/100:.3f}÷365日)＝{days}日"
+    return "手形割引", "⑧割引日数逆算", q_text, str(days), f_text, "days"
+
+# ⑨ 割引率・日付・額面逆算
+def gen_q9(idx):
+    sub_type = idx % 3
+    if sub_type == 0:
+        m_factor = random.randint(22, 115)
+        if m_factor % 5 == 0:
+            m_factor += 2
+        face_val = m_factor * 73000
+        days = random.randint(12, 24) * 5
+        rate_val = random.randint(24, 58)
+        rate = Decimal(rate_val) / Decimal('10')
+        discount = int(Decimal(face_val) * (rate / Decimal('100')) * Decimal(days) / Decimal('365'))
+        sm = random.randint(4, 8)
+        sd = random.randint(5, 22)
+        d1, d2, b_str = get_date_pair(sm, sd, days, is_ryotan=True)
+        q_text = f"{d2.month}月{d2.day}日満期、額面￥{face_val:,}の手形を、{d1.month}月{d1.day}日に割り引き、割引料￥{discount:,}を支払った。割引率は年何％ですか。（両端入れ）"
+        f_text = f"{days}日間 / 割引料￥{discount:,}÷(￥{face_val:,}×{days}日÷365日)＝{rate}％"
+        return "手形割引", "⑨割引率・日付・額面逆算", q_text, str(rate), f_text, "percent"
+    elif sub_type == 1:
+        m_factor = random.randint(22, 115)
+        if m_factor % 5 == 0:
+            m_factor += 3
+        face_val = m_factor * 73000
+        rate = Decimal(random.choice([25, 30, 35, 40, 45])) / Decimal('10')
+        days = random.randint(60, 95)
+        discount = int(Decimal(face_val) * (rate / Decimal('100')) * Decimal(days) / Decimal('365'))
+        proceeds = face_val - discount
+        sm = random.randint(4, 8)
+        sd = random.randint(10, 25)
+        d1, d2, b_str = get_date_pair(sm, sd, days, is_ryotan=True)
+        q_text = f"額面￥{face_val:,}の手形を、割引率年{rate}％で割り引き、手取金￥{proceeds:,}を受け取った。割引日を{d1.month}月{d1.day}日とすると、満期日は何月何日ですか。（両端入れ）"
+        f_text = f"割引日数＝{days}日 / {d1.month}月{d1.day}日から両端入れで{days}日後 → {d2.month}月{d2.day}日"
+        return "手形割引", "⑨割引率・日付・額面逆算", q_text, f"{d2.month}月{d2.day}日", f_text, "date"
+    else:
+        proceeds = (random.randint(32, 85) * 10 + random.choice([2, 4, 5, 6, 8])) * 10000
+        days = random.choice([65, 75, 80, 85, 90, 100])
+        rate = Decimal(random.randint(26, 52)) / Decimal('10')
+        denom = Decimal('1') - (rate / Decimal('100')) * Decimal(days) / Decimal('365')
+        raw_face = Decimal(proceeds) / denom
+        ans_face = round_up_100yen(raw_face)
+        q_text = f"手形を振り出し、これを割り引いて手取金￥{proceeds:,}を得たい。割引日数{days}日、割引率を年{rate}％とすると、手形金額をいくらにすればよいですか。（手形金額の￥100未満切り上げ）"
+        f_text = f"手形金額をXとすると、X－X×{rate/100:.3f}×{days}日÷365日＝￥{proceeds:,} → ￥{ans_face:,}"
+        return "手形割引", "⑨割引率・日付・額面逆算", q_text, str(ans_face), f_text, "yen"
+
+# --- 【4. 仲介に係るもの（仲立人）】 ---
+# ⑩ 手取金→支払総額
+def gen_q10(idx):
+    trade_val = (random.randint(18, 85) * 10 + random.choice([2, 3, 4, 6, 7, 8])) * 10000
     s_pct = random.randint(18, 48)
     b_pct = random.randint(15, 45)
     s_rate = Decimal(s_pct) / Decimal('10')
@@ -387,10 +459,11 @@ def gen_p7(idx):
     buyer_total = int(Decimal(trade_val) * (Decimal('1000') + Decimal(b_pct)) / Decimal('1000'))
     q_text = f"仲立人が売り主から{s_rate}％、買い主から{b_rate}％の手数料を受け取る約束で商品売買の仲介をした。売り主の手取金が￥{seller_net:,}のとき、買い主の支払総額はいくらですか。"
     f_text = f"￥{seller_net:,}÷(1－{s_rate/100:.3f})×(1＋{b_rate/100:.3f})＝￥{buyer_total:,}"
-    return "3.仲立人", "⑦手取金→支払総額", q_text, str(buyer_total), f_text, "yen"
+    return "仲立人", "⑩手取金→支払総額", q_text, str(buyer_total), f_text, "yen"
 
-def gen_p8(idx):
-    trade_val = random.randint(25, 90) * 1000000
+# ⑪ 支払総額→手取金
+def gen_q11(idx):
+    trade_val = (random.randint(18, 85) * 10 + random.choice([2, 3, 4, 6, 7, 8])) * 10000
     s_pct = random.randint(18, 48)
     b_pct = random.randint(15, 45)
     s_rate = Decimal(s_pct) / Decimal('10')
@@ -399,10 +472,11 @@ def gen_p8(idx):
     buyer_total = int(Decimal(trade_val) * (Decimal('1000') + Decimal(b_pct)) / Decimal('1000'))
     q_text = f"仲立人が売り主から{s_rate}％、買い主から{b_rate}％の手数料を受け取る約束で商品売買の仲介をした。買い主の支払総額が￥{buyer_total:,}のとき、売り主の手取金はいくらですか。"
     f_text = f"￥{buyer_total:,}÷(1＋{b_rate/100:.3f})×(1－{s_rate/100:.3f})＝￥{seller_net:,}"
-    return "3.仲立人", "⑧支払総額→手取金", q_text, str(seller_net), f_text, "yen"
+    return "仲立人", "⑪支払総額→手取金", q_text, str(seller_net), f_text, "yen"
 
-def gen_p9(idx):
-    trade_val = random.randint(25, 90) * 1000000
+# ⑫ 手数料合計の逆算
+def gen_q12(idx):
+    trade_val = (random.randint(18, 85) * 10 + random.choice([2, 3, 4, 6, 7, 8])) * 10000
     s_pct = random.randint(18, 48)
     b_pct = random.randint(15, 45)
     s_rate = Decimal(s_pct) / Decimal('10')
@@ -416,41 +490,87 @@ def gen_p9(idx):
         buyer_total = int(Decimal(trade_val) * (Decimal('1000') + Decimal(b_pct)) / Decimal('1000'))
         q_text = f"仲立人が売り主から{s_rate}％、買い主から{b_rate}％の手数料を受け取る約束で商品売買の仲介をした。買い主の支払総額が￥{buyer_total:,}のとき、仲立人の受け取る手数料合計はいくらですか。"
         f_text = f"￥{buyer_total:,}÷(1＋{b_rate/100:.3f})×({s_rate/100:.3f}＋{b_rate/100:.3f})＝￥{fee_total:,}"
-    return "3.仲立人", "⑨手数料合計の逆算", q_text, str(fee_total), f_text, "yen"
+    return "仲立人", "⑫手数料合計の逆算", q_text, str(fee_total), f_text, "yen"
 
-def gen_p10(idx):
-    qty_kg = random.randint(30, 80) * 100
-    price_per_10kg = random.randint(45, 95) * 100
-    expenses = random.randint(15, 60) * 1000
-    fee_rate = Decimal(random.choice([20, 25, 30, 35, 40, 50])) / Decimal('10')
-    sales = (qty_kg // 10) * price_per_10kg
-    remittance = int(Decimal(sales) * (Decimal('1') - fee_rate / Decimal('100')) - Decimal(expenses))
-    fee_str = f"{int(fee_rate)}" if fee_rate == int(fee_rate) else f"{fee_rate}"
-    q_text = f"商品{qty_kg:,}kgの販売を委託され、10kgにつき￥{price_per_10kg:,}で販売し、販売諸掛￥{expenses:,}を立て替えた。販売手数料を売上高の{fee_str}％とすると、委託主への送金額はいくらですか。"
-    f_text = f"({qty_kg:,}kg÷10kg×￥{price_per_10kg:,})×(1－{fee_rate/100:.3f})－￥{expenses:,}＝￥{remittance:,}"
-    return "4.売買委託", "⑩販売委託の送金額", q_text, str(remittance), f_text, "yen"
+# --- 【5. 値引と増量の比較に係るもの】 ---
+# ⑬ 値引と増量の有利比較（途中計算でも小数点が一切出ない完全設計）
+def gen_q13(idx):
+    base_kg = random.choice([1, 10, 15])
+    inc_options = [
+        (2, 50),  # 50 * 102 = 5,100
+        (4, 25),  # 25 * 104 = 2,600
+        (5, 20),  # 20 * 105 = 2,100
+        (8, 25),  # 25 * 108 = 2,700
+        (10, 10), # 10 * 110 = 1,100
+    ]
+    inc_pct, step = random.choice(inc_options)
+    disc_pct = inc_pct + random.choice([-2, -1, 1])
+    if disc_pct <= 1:
+        disc_pct = 3
 
-def gen_p11(idx):
-    sales = random.randint(20, 60) * 1000000
-    fee_pct = random.choice([25, 30, 35, 40, 42, 45, 50])
-    fee_rate = Decimal(fee_pct) / Decimal('10')
-    expenses = random.randint(15, 80) * 1000
-    remittance = int(Decimal(sales) * (Decimal('1000') - Decimal(fee_pct)) / Decimal('1000') - Decimal(expenses))
-    q_text = f"ある商品の販売を委託したところ、売上高の{fee_rate}％の手数料と、販売諸掛￥{expenses:,}を差し引いて￥{remittance:,}を送金してきた。売上高はいくらになりますか。"
-    f_text = f"(￥{remittance:,}＋￥{expenses:,})÷(1－{fee_rate/100:.3f})＝￥{sales:,}"
-    return "4.売買委託", "⑪販売委託の売上高逆算", q_text, str(sales), f_text, "yen"
+    odd_factor = random.choice([7, 9, 11, 13, 15, 17, 19, 21, 23, 27, 29])
+    k = step * odd_factor
+    p_per_kg = k * (100 + inc_pct)
+    base_price = p_per_kg * base_kg
 
-def gen_p12(idx):
-    buy_price = random.randint(80, 250) * 10000
-    expenses = random.randint(20, 60) * 1000
-    fee_pct = random.choice([3, 4, 5, 6, 7])
-    total_cost = buy_price + expenses
-    claim = int(Decimal(total_cost) * (Decimal('1') + Decimal(fee_pct) / Decimal('100')))
-    q_text = f"買付の委託を受けた商品を￥{buy_price:,}で買い入れ、諸掛￥{expenses:,}を立て替えた。手数料を諸掛込原価の{fee_pct}％とすると、委託主への請求額はいくらですか。"
-    f_text = f"(￥{buy_price:,}＋￥{expenses:,})×(1＋{fee_pct/100:.2f})＝￥{claim:,}"
-    return "4.売買委託", "⑫買付委託の請求額", q_text, str(claim), f_text, "yen"
+    price_disc_per_kg = (p_per_kg * (100 - disc_pct)) // 100
+    price_inc_per_kg = (p_per_kg * 100) // (100 + inc_pct)
+    diff = abs(price_disc_per_kg - price_inc_per_kg)
 
-def gen_p13(idx):
+    is_buyer = (idx % 2 == 1)
+    target_person = "買い手にとって" if is_buyer else "売り手にとって"
+    if is_buyer:
+        winner = "値引" if price_disc_per_kg < price_inc_per_kg else "増量"
+    else:
+        winner = "値引" if price_disc_per_kg > price_inc_per_kg else "増量"
+
+    q_text = f"{base_kg}kgにつき￥{base_price:,}の商品を販売するとき、値段を{disc_pct}％引きするのと数量を{inc_pct}％増量するのとでは、1kgあたりで比較すると、{target_person}どちらがいくら有利ですか。"
+    f_text = f"値引時1kgあたり￥{price_disc_per_kg:,}、増量時1kgあたり￥{price_inc_per_kg:,} → 差額￥{diff:,}（{target_person}、{winner}有利）"
+    return "損益・売買", "⑬値引と増量の有利比較", q_text, f"{winner}_{diff}", f_text, "comparison"
+
+# --- 【6. 風袋・減量に係るもの】 ---
+# ⑭ 風袋・減量からの純量計算
+def gen_q14(idx):
+    mode = modes_list[idx % 3]
+    total_kg = random.randint(215, 785) * 10 + random.choice([5, 0])
+    tare_pct = random.randint(2, 5)
+    loss_pct = random.randint(1, 3)
+    unit_price = random.randint(620, 980)
+    profit_pct = random.randint(21, 29)
+    net_kg = Decimal(total_kg) * (Decimal('1') - Decimal(tare_pct)/Decimal('100')) * (Decimal('1') - Decimal(loss_pct)/Decimal('100'))
+    raw_val = Decimal(unit_price) * net_kg * (Decimal('1') + Decimal(profit_pct)/Decimal('100'))
+    ans = round_yen(raw_val, mode)
+    q_text = f"総量{total_kg:,}kg、風袋{tare_pct}％、減量は風袋を除いた量の{loss_pct}％の商品を、純量1kgにつき￥{unit_price:,}で仕入れ、仕入原価の{profit_pct}％の利益を見込んで定価をつけた。定価はいくらですか。（計算の最終で円未満{mode}）"
+    f_text = f"{total_kg:,}kg×(1－{tare_pct/100:.2f})×(1－{loss_pct/100:.2f})＝純量{net_kg}kg / ￥{unit_price:,}×{net_kg}kg×(1＋{profit_pct/100:.2f})＝￥{raw_val:,.3f} → ￥{ans:,}（円未満{mode}）"
+    return "定価算出", "⑭風袋・減量からの純量計算", q_text, str(ans), f_text, "yen"
+
+# --- 【7. 外貨に係るもの】 ---
+# ⑮ 外貨・グロス/ダース換算
+def gen_q15(idx):
+    mode = modes_list[idx % 3]
+    if idx % 2 == 0:
+        unit_base = Decimal(random.randint(2500, 5500)) / Decimal('100')
+        gross_price = unit_base * Decimal('12') + Decimal(random.choice(['0.10', '0.20', '0.30', '0.50', '0.70', '0.85']))
+        qty_doz = random.randint(35, 85) * 10 + random.choice([2, 5, 7, 8])
+        profit_pct = random.randint(12, 26)
+        rate = Decimal(random.randint(14200, 15800)) / Decimal('100')
+        raw_val = (gross_price / Decimal('12')) * Decimal(qty_doz) * (Decimal('1') + Decimal(profit_pct)/Decimal('100')) * rate
+        ans = round_yen(raw_val, mode)
+        q_text = f"1グロス＄{gross_price:.2f}の商品を{qty_doz:,}ダース販売するため、原価の{profit_pct}％の利益を見込んで定価をつけた。定価は円貨でいくらですか。ただし、＄1＝￥{rate:.2f}とする。（計算の最終で円未満{mode}）"
+        f_text = f"＄{gross_price:.2f}÷12×{qty_doz:,}ダース×(1＋{profit_pct/100:.2f})×￥{rate:.2f}＝￥{raw_val:,.3f} → ￥{ans:,}（円未満{mode}）"
+    else:
+        doz_price = Decimal(random.randint(4500, 48000)) / Decimal('100')
+        qty_pcs = random.randint(120, 580) * 12 + random.choice([0, 12, 24, 48])
+        profit_pct = random.randint(12, 25)
+        rate = Decimal(random.randint(14200, 15800)) / Decimal('100')
+        raw_val = (doz_price / Decimal('12')) * Decimal(qty_pcs) * (Decimal('1') + Decimal(profit_pct)/Decimal('100')) * rate
+        ans = round_yen(raw_val, mode)
+        q_text = f"1ダース＄{doz_price:.2f}の商品を{qty_pcs:,}個販売するため、原価の{profit_pct}％の利益を見込んで定価をつけた。定価は円貨でいくらですか。ただし、＄1＝￥{rate:.2f}とする。（計算の最終で円未満{mode}）"
+        f_text = f"＄{doz_price:.2f}÷12×{qty_pcs:,}個×(1＋{profit_pct/100:.2f})×￥{rate:.2f}＝￥{raw_val:,.3f} → ￥{ans:,}（円未満{mode}）"
+    return "定価算出", "⑮外貨・グロス/ダース換算", q_text, str(ans), f_text, "yen"
+
+# ⑯ ドル(＄)→ユーロ(€)
+def gen_q16(idx):
     usd = Decimal(random.randint(450000, 2900000)) / Decimal('100')
     rate_usd = Decimal(random.randint(14200, 15500)) / Decimal('100')
     rate_eur = rate_usd + Decimal(random.randint(1200, 2200)) / Decimal('100')
@@ -458,9 +578,10 @@ def gen_p13(idx):
     ans_eur = round_cent(raw_eur)
     q_text = f"＄{usd:,.2f}は、€（ユーロ）でいくらですか。ただし、＄1＝￥{rate_usd:.2f}、€1＝￥{rate_eur:.2f}とする。（セント未満四捨五入）"
     f_text = f"＄{usd:,.2f}×￥{rate_usd:.2f}÷￥{rate_eur:.2f}＝€{raw_eur:,.4f} → €{ans_eur:,.2f}"
-    return "5.為替換算", "⑬ドル(＄)→ユーロ(€)", q_text, str(ans_eur), f_text, "eur"
+    return "為替換算", "⑯ドル(＄)→ユーロ(€)", q_text, str(ans_eur), f_text, "eur"
 
-def gen_p14(idx):
+# ⑰ ユーロ(€)→米貨(＄)
+def gen_q17(idx):
     eur = Decimal(random.randint(250000, 950000)) / Decimal('100')
     rate_usd = Decimal(random.randint(14200, 15500)) / Decimal('100')
     rate_eur = rate_usd + Decimal(random.randint(1200, 2200)) / Decimal('100')
@@ -468,143 +589,89 @@ def gen_p14(idx):
     ans_usd = round_cent(raw_usd)
     q_text = f"€{eur:,.2f}は、米貨でいくらですか。ただし、€1＝￥{rate_eur:.2f}、＄1＝￥{rate_usd:.2f}とする。（セント未満四捨五入）"
     f_text = f"€{eur:,.2f}×￥{rate_eur:.2f}÷￥{rate_usd:.2f}＝＄{raw_usd:,.4f} → ＄{ans_usd:,.2f}"
-    return "5.為替換算", "⑭ユーロ(€)→米貨(＄)", q_text, str(ans_usd), f_text, "usd"
+    return "為替換算", "⑰ユーロ(€)→米貨(＄)", q_text, str(ans_usd), f_text, "usd"
 
-def gen_p15(idx):
-    principal = random.randint(15, 80) * 120000
-    rate = Decimal(random.choice([24, 30, 36, 42, 48])) / Decimal('10')
-    years = random.randint(1, 3)
-    months = random.randint(1, 11)
-    total_months = years * 12 + months
-    interest = int(Decimal(principal) * (rate / Decimal('100')) * Decimal(total_months) / Decimal('12'))
-    total_amt = principal + interest
-    q_text = f"￥{principal:,}を年利率{rate}％で借り入れ、期日に元利合計￥{total_amt:,}を支払った。借入期間は、何年何か月ですか。"
-    f_text = f"(￥{total_amt:,}－￥{principal:,})÷(￥{principal:,}×{rate/100:.3f})×12か月＝{total_months}か月＝{years}年{months}か月"
-    return "6.単利利息", "⑮借入期間（年月）逆算", q_text, f"{years}_{months}", f_text, "year_month"
+# --- 【8. 委託に係るもの（売買委託）】 ---
+# ⑱ 販売委託の送金額
+def gen_q18(idx):
+    qty_kg = (random.randint(8, 34) * 10 + random.choice([2, 4, 6, 8])) * 20
+    price_per_10kg = (random.randint(35, 95) * 10 + random.choice([2, 4, 5, 6, 8])) * 10
+    expenses = (random.randint(15, 75) * 10 + random.choice([2, 4, 5, 6, 8])) * 100
+    fee_rate = Decimal(random.choice([20, 25, 30, 35, 40, 45])) / Decimal('10')
+    sales = (qty_kg // 10) * price_per_10kg
+    remittance = int(Decimal(sales) * (Decimal('1') - fee_rate / Decimal('100')) - Decimal(expenses))
+    fee_str = f"{int(fee_rate)}" if fee_rate == int(fee_rate) else f"{fee_rate}"
+    q_text = f"商品{qty_kg:,}kgの販売を委託され、10kgにつき￥{price_per_10kg:,}で販売し、販売諸掛￥{expenses:,}を立て替えた。販売手数料を売上高の{fee_str}％とすると、委託主への送金額はいくらですか。"
+    f_text = f"({qty_kg:,}kg÷10kg×￥{price_per_10kg:,})×(1－{fee_rate/100:.3f})－￥{expenses:,}＝￥{remittance:,}"
+    return "売買委託", "⑱販売委託の送金額", q_text, str(remittance), f_text, "yen"
 
-def gen_p16(idx):
-    m_factor = random.randint(10, 30)
-    principal = m_factor * 365000
-    days = random.randint(15, 28) * 5
-    rate_val = random.randint(24, 56)
-    rate = Decimal(rate_val) / Decimal('10')
-    interest = int(Decimal(principal) * (rate / Decimal('100')) * Decimal(days) / Decimal('365'))
-    total_amt = principal + interest
-    sm = random.randint(3, 8)
-    sd = random.randint(5, 20)
-    d1, d2, b_str = get_date_pair(sm, sd, days, is_ryotan=False)
-    q_text = f"元金￥{principal:,}を{d1.month}月{d1.day}日から{d2.month}月{d2.day}日まで貸し付け、期日に元利合計￥{total_amt:,}を受け取った。貸付利率は年何パーセントですか。（片落とし）"
-    f_text = f"{d1.month}/{d1.day}〜{d2.month}/{d2.day}（片落とし）＝{days}日間 / 利息￥{interest:,}÷(￥{principal:,}×{days}日÷365日)＝{rate}％"
-    return "6.単利利息", "⑯貸付利率逆算（片落とし）", q_text, str(rate), f_text, "percent"
+# ⑲ 販売委託の売上高逆算
+def gen_q19(idx):
+    sales = (random.randint(15, 55) * 10 + random.choice([2, 3, 4, 6, 7, 8])) * 10000
+    fee_pct = random.choice([25, 30, 35, 38, 40, 42, 45])
+    fee_rate = Decimal(fee_pct) / Decimal('10')
+    expenses = (random.randint(12, 48) * 10 + random.choice([2, 4, 6, 8])) * 100
+    remittance = int(Decimal(sales) * (Decimal('1000') - Decimal(fee_pct)) / Decimal('1000') - Decimal(expenses))
+    q_text = f"ある商品の販売を委託したところ、売上高の{fee_rate}％の手数料と、販売諸掛￥{expenses:,}を差し引いて￥{remittance:,}を送金してきた。売上高はいくらになりますか。"
+    f_text = f"(￥{remittance:,}＋￥{expenses:,})÷(1－{fee_rate/100:.3f})＝￥{sales:,}"
+    return "売買委託", "⑲販売委託の売上高逆算", q_text, str(sales), f_text, "yen"
 
-def gen_p17(idx):
-    if idx % 2 == 0:
-        principal = random.randint(350, 980) * 1000
-        rate = Decimal(random.randint(22, 54)) / Decimal('10')
-        days = random.randint(65, 135)
-        sm = random.randint(3, 8)
-        sd = random.randint(5, 22)
-        d1, d2, b_str = get_date_pair(sm, sd, days, is_ryotan=False)
-        raw_total = Decimal(principal) + Decimal(principal) * (rate / Decimal('100')) * Decimal(days) / Decimal('365')
-        ans = round_yen(raw_total, "四捨五入")
-        q_text = f"￥{principal:,}を年利率{rate}％で{d1.month}月{d1.day}日から{d2.month}月{d2.day}日まで貸し付けた。期日に受け取る元利合計はいくらですか。（片落とし、円未満四捨五入）"
-        f_text = f"{days}日間 / ￥{principal:,}＋利息＝￥{raw_total:,.3f} → ￥{ans:,}"
-    else:
-        principal = random.randint(20, 60) * 120000
-        rate = Decimal(random.choice([24, 30, 36, 42])) / Decimal('10')
-        years = random.randint(1, 3)
-        months = random.randint(1, 11)
-        total_months = years * 12 + months
-        interest = int(Decimal(principal) * (rate / Decimal('100')) * Decimal(total_months) / Decimal('12'))
-        ans = principal + interest
-        q_text = f"￥{principal:,}を年利率{rate}％で{years}年{months}か月間貸し付けた。期日に受け取る元利合計はいくらですか。"
-        f_text = f"￥{principal:,}＋利息￥{interest:,}＝￥{ans:,}"
-    return "6.単利利息", "⑰元利合計算出", q_text, str(ans), f_text, "yen"
+# ⑳ 買付委託の請求額
+def gen_q20(idx):
+    buy_price = (random.randint(65, 245) * 10 + random.choice([2, 4, 5, 6, 8])) * 1000
+    expenses = (random.randint(15, 55) * 10 + random.choice([2, 5, 8])) * 100
+    fee_pct = random.choice([3, 4, 5, 6, 7])
+    total_cost = buy_price + expenses
+    claim = int(Decimal(total_cost) * (Decimal('1') + Decimal(fee_pct) / Decimal('100')))
+    q_text = f"買付の委託を受けた商品を￥{buy_price:,}で買い入れ、諸掛￥{expenses:,}を立て替えた。手数料を諸掛込原価の{fee_pct}％とすると、委託主への請求額はいくらですか。"
+    f_text = f"(￥{buy_price:,}＋￥{expenses:,})×(1＋{fee_pct/100:.2f})＝￥{claim:,}"
+    return "売買委託", "⑳買付委託の請求額", q_text, str(claim), f_text, "yen"
 
-def gen_p18(idx):
-    principal = random.randint(20, 50) * 240000
-    rate = Decimal(random.choice([24, 30, 36, 42])) / Decimal('10')
-    years = random.randint(1, 3)
-    months = random.choice([3, 6, 8, 9])
-    total_months = years * 12 + months
-    interest = int(Decimal(principal) * (rate / Decimal('100')) * Decimal(total_months) / Decimal('12'))
-    total_amt = principal + interest
-    q_text = f"年利率{rate}％で{years}年{months}か月間借り入れ、期日に元利合計￥{total_amt:,}を支払った。元金はいくらですか。"
-    f_text = f"元金をXとすると、X×(1＋{rate/100:.3f}×{total_months}か月÷12か月)＝￥{total_amt:,} → 元金￥{principal:,}"
-    return "6.単利利息", "⑱元金逆算（年月）", q_text, str(principal), f_text, "yen"
-
-def gen_p19(idx):
-    m_factor = random.randint(10, 30)
-    face_val = m_factor * 365000
-    days = random.randint(45, 115)
-    rate = Decimal(random.choice([25, 28, 30, 32, 35, 40, 45])) / Decimal('10')
-    discount = int(Decimal(face_val) * (rate / Decimal('100')) * Decimal(days) / Decimal('365'))
-    proceeds = face_val - discount
-    q_text = f"額面￥{face_val:,}の手形を、割引率年{rate}％で割り引き、手取金￥{proceeds:,}を受け取った。割引日数は何日ですか。"
-    f_text = f"割引料￥{discount:,}÷(￥{face_val:,}×{rate/100:.3f}÷365日)＝{days}日"
-    return "7.手形割引", "⑲割引日数逆算", q_text, str(days), f_text, "days"
-
-def gen_p20(idx):
-    sub_type = idx % 3
-    if sub_type == 0:
-        m_factor = random.randint(10, 30)
-        face_val = m_factor * 365000
-        days = random.randint(12, 24) * 5
-        rate_val = random.randint(24, 58)
-        rate = Decimal(rate_val) / Decimal('10')
-        discount = int(Decimal(face_val) * (rate / Decimal('100')) * Decimal(days) / Decimal('365'))
-        sm = random.randint(4, 8)
-        sd = random.randint(5, 22)
-        d1, d2, b_str = get_date_pair(sm, sd, days, is_ryotan=True)
-        q_text = f"{d2.month}月{d2.day}日満期、額面￥{face_val:,}の手形を、{d1.month}月{d1.day}日に割り引き、割引料￥{discount:,}を支払った。割引率は年何％ですか。（両端入れ）"
-        f_text = f"{days}日間 / 割引料￥{discount:,}÷(￥{face_val:,}×{days}日÷365日)＝{rate}％"
-        return "7.手形割引", "⑳割引率逆算（両端入れ）", q_text, str(rate), f_text, "percent"
-    elif sub_type == 1:
-        m_factor = random.randint(10, 30)
-        face_val = m_factor * 365000
-        rate = Decimal(random.choice([25, 28, 32, 35, 40, 45])) / Decimal('10')
-        days = random.randint(60, 95)
-        discount = int(Decimal(face_val) * (rate / Decimal('100')) * Decimal(days) / Decimal('365'))
-        proceeds = face_val - discount
-        sm = random.randint(4, 8)
-        sd = random.randint(10, 25)
-        d1, d2, b_str = get_date_pair(sm, sd, days, is_ryotan=True)
-        q_text = f"額面￥{face_val:,}の手形を、割引率年{rate}％で割り引き、手取金￥{proceeds:,}を受け取った。割引日を{d1.month}月{d1.day}日とすると、満期日は何月何日ですか。（両端入れ）"
-        f_text = f"割引日数＝{days}日 / {d1.month}月{d1.day}日から両端入れで{days}日後 → {d2.month}月{d2.day}日"
-        return "7.手形割引", "⑳満期日逆算（両端入れ）", q_text, f"{d2.month}月{d2.day}日", f_text, "date"
-    else:
-        proceeds = random.randint(320, 850) * 10000
-        days = random.choice([65, 75, 80, 85, 90, 100])
-        rate = Decimal(random.randint(26, 52)) / Decimal('10')
-        denom = Decimal('1') - (rate / Decimal('100')) * Decimal(days) / Decimal('365')
-        raw_face = Decimal(proceeds) / denom
-        ans_face = round_up_100yen(raw_face)
-        q_text = f"手形を振り出し、これを割り引いて手取金￥{proceeds:,}を得たい。割引日数{days}日、割引率を年{rate}％とすると、手形金額をいくらにすればよいですか。（手形金額の￥100未満切り上げ）"
-        f_text = f"手形金額をXとすると、X－X×{rate/100:.3f}×{days}日÷365日＝￥{proceeds:,} → ￥{ans_face:,}"
-        return "7.手形割引", "⑳手形金額逆算", q_text, str(ans_face), f_text, "yen"
-
+# ご指定の順序（①〜⑳）で格納された生成関数リスト
 generators = [
-    gen_p1, gen_p2, gen_p3, gen_p4, gen_p5, gen_p6, gen_p7, gen_p8, gen_p9, gen_p10,
-    gen_p11, gen_p12, gen_p13, gen_p14, gen_p15, gen_p16, gen_p17, gen_p18, gen_p19, gen_p20
+    gen_q1, gen_q2, gen_q3, gen_q4,     # お金の貸し借り（①〜④）
+    gen_q5, gen_q6, gen_q7,             # 商品の原価・利益・売価（⑤〜⑦）
+    gen_q8, gen_q9,                     # 手形（⑧〜⑨）
+    gen_q10, gen_q11, gen_q12,          # 仲介（⑩〜⑫）
+    gen_q13,                            # 値引と増量の比較（⑬）
+    gen_q14,                            # 風袋・減量（⑭）
+    gen_q15, gen_q16, gen_q17,          # 外貨（⑮〜⑰）
+    gen_q18, gen_q19, gen_q20           # 委託（⑱〜⑳）
 ]
 
 PATTERN_NAMES = [
-    "①外貨・グロス/ダース換算", "②風袋・減量からの純量計算", "③諸掛込原価の利益率", "④値引と増量の有利比較",
-    "⑤損益からの定価・原価逆算", "⑥目標利益からの定価逆算", "⑦手取金→支払総額", "⑧支払総額→手取金",
-    "⑨手数料合計の逆算", "⑩販売委託の送金額", "⑪販売委託の売上高逆算", "⑫買付委託の請求額",
-    "⑬ドル(＄)→ユーロ(€)", "⑭ユーロ(€)→米貨(＄)", "⑮借入期間（年月）逆算", "⑯貸付利率逆算（片落とし）",
-    "⑰元利合計算出", "⑱元金逆算（年月）", "⑲割引日数逆算", "⑳割引率・日付・額面逆算"
+    "①借入期間（年月）逆算",
+    "②貸付利率逆算（片落とし）",
+    "③元利合計算出",
+    "④元金逆算（年月）",
+    "⑤諸掛込原価の利益率",
+    "⑥損益からの定価・原価逆算",
+    "⑦目標利益からの定価逆算",
+    "⑧割引日数逆算",
+    "⑨割引率・日付・額面逆算",
+    "⑩手取金→支払総額",
+    "⑪支払総額→手取金",
+    "⑫手数料合計の逆算",
+    "⑬値引と増量の有利比較",
+    "⑭風袋・減量からの純量計算",
+    "⑮外貨・グロス/ダース換算",
+    "⑯ドル(＄)→ユーロ(€)",
+    "⑰ユーロ(€)→米貨(＄)",
+    "⑱販売委託の送金額",
+    "⑲販売委託の売上高逆算",
+    "⑳買付委託の請求額"
 ]
 
+# 本試験モード（8問構成）の選出スロット（新しい並び順のインデックスに対応）
 MOCK_EXAM_SLOTS = [
-    [0, 1],             # 問1: ①外貨 または ②風袋純量
-    [2, 3, 4, 5],       # 問2: ③利益率, ④有利比較, ⑤損益逆算, ⑥目標利益
-    [6, 7, 8],          # 問3: ⑦手取→支払, ⑧支払→手取, ⑨手数料合計
-    [9, 10, 11],        # 問4: ⑩送金額, ⑪売上高逆算, ⑫請求額
-    [12, 13],           # 問5: ⑬米貨→ユーロ, ⑭ユーロ→米貨
-    [14, 15, 16, 17],   # 問6: ⑮期間逆算, ⑯利率逆算, ⑰元利合計, ⑱元金逆算
-    [18],               # 問7: ⑲割引日数逆算
-    [19]                # 問8: ⑳手形総合（利率・期日・額面）
+    [13, 14],           # 問1: 定価算出（⑭風袋 または ⑮外貨）
+    [4, 5, 6, 12],      # 問2: 損益・売買（⑤利益率, ⑥損益逆算, ⑦目標利益, ⑬値引と増量）
+    [9, 10, 11],        # 問3: 仲介（⑩手取→支払, ⑪支払→手取, ⑫手数料合計）
+    [17, 18, 19],       # 問4: 委託（⑱送金額, ⑲売上高逆算, ⑳請求額）
+    [15, 16],           # 問5: 為替換算（⑯ドル→ユーロ, ⑰ユーロ→米貨）
+    [0, 1, 2, 3],       # 問6: お金の貸し借り（①期間逆算, ②利率逆算, ③元利合計, ④元金逆算）
+    [7],                # 問7: 手形割引日数（⑧割引日数逆算）
+    [8]                 # 問8: 手形総合（⑨割引率・日付・額面逆算）
 ]
 
 # =========================================================================
@@ -628,6 +695,8 @@ if "start_time" not in st.session_state:
     st.session_state.start_time = 0.0
 if "elapsed_str" not in st.session_state:
     st.session_state.elapsed_str = ""
+if "q_seq" not in st.session_state:
+    st.session_state.q_seq = 0
 
 def generate_mock_questions():
     q_list = []
@@ -638,6 +707,7 @@ def generate_mock_questions():
     return q_list
 
 def pick_next_question(app_mode, chosen_indices):
+    st.session_state.q_seq += 1
     if app_mode == "🎲 全20パターンからランダム":
         gen = random.choice(generators)
         return gen(random.randint(1, 100))
@@ -667,12 +737,13 @@ if not st.session_state.is_started:
 
     chosen_indices = []
     if app_mode == "🎯 パターンを複数選んで練習":
-        st.write("▼ 練習したいパターンを選択してください：")
+        st.write("▼ 練習したいパターンを選択してください（複数選択可）：")
         col1, col2 = st.columns(2)
         for i, p_name in enumerate(PATTERN_NAMES):
             target_col = col1 if i < 10 else col2
             with target_col:
-                if st.checkbox(p_name, value=(i in [2, 3, 18, 19]), key=f"init_chk_{i}"):
+                # 初期状態はすべてチェックなし（value=False）
+                if st.checkbox(p_name, value=False, key=f"init_chk_{i}"):
                     chosen_indices.append(i)
 
     st.write("")
@@ -706,6 +777,7 @@ else:
             st.rerun()
 
     cat, pat, q_text, correct_ans, f_text, input_type = st.session_state.current_q
+    seq_key = st.session_state.q_seq
 
     if st.session_state.app_mode == "📝 本試験モード（8問演習）":
         st.progress((st.session_state.mock_idx + 1) / 8)
@@ -719,11 +791,11 @@ else:
         st.write("**利益率を入力：**")
         col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
         with col1:
-            w_in = st.text_input("割", placeholder="2", label_visibility="collapsed")
+            w_in = st.text_input("割", placeholder="2", label_visibility="collapsed", key=f"w_{seq_key}")
         with col2:
             st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>割</p>", unsafe_allow_html=True)
         with col3:
-            b_in = st.text_input("分", placeholder="8", label_visibility="collapsed")
+            b_in = st.text_input("分", placeholder="8", label_visibility="collapsed", key=f"b_{seq_key}")
         with col4:
             st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>分</p>", unsafe_allow_html=True)
         user_clean = f"{w_in.strip()}_{b_in.strip()}"
@@ -731,42 +803,42 @@ else:
     elif input_type == "comparison":
         col1, col2 = st.columns([1, 2])
         with col1:
-            choice = st.radio("どちらが有利？", ["値引", "増量"], horizontal=True)
+            choice = st.radio("どちらが有利？", ["値引", "増量"], horizontal=True, key=f"comp_c_{seq_key}")
         with col2:
-            val_input = st.text_input("有利な金額（￥）", placeholder="例: 1064")
+            val_input = st.text_input("有利な金額（￥）", placeholder="例: 1064", key=f"comp_v_{seq_key}")
         user_clean = f"{choice}_{val_input.replace(',', '').replace('￥', '').replace('円', '').strip()}"
 
     elif input_type == "year_month":
         col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
         with col1:
-            y_in = st.text_input("年", placeholder="2", label_visibility="collapsed")
+            y_in = st.text_input("年", placeholder="2", label_visibility="collapsed", key=f"y_{seq_key}")
         with col2:
             st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>年</p>", unsafe_allow_html=True)
         with col3:
-            m_in = st.text_input("か月", placeholder="8", label_visibility="collapsed")
+            m_in = st.text_input("か月", placeholder="8", label_visibility="collapsed", key=f"m_{seq_key}")
         with col4:
             st.markdown("<p style='line-height:2.4; font-size:16px; font-weight:bold;'>か月</p>", unsafe_allow_html=True)
         user_clean = f"{y_in.strip()}_{m_in.strip()}"
 
     elif input_type == "percent":
-        u_in = st.text_input("利率（％）", placeholder="例: 4.2")
+        u_in = st.text_input("利率（％）", placeholder="例: 4.2", key=f"pct_{seq_key}")
         user_clean = u_in.replace("%", "").replace("％", "").strip()
 
     elif input_type == "days":
-        u_in = st.text_input("割引日数（日）", placeholder="例: 80")
+        u_in = st.text_input("割引日数（日）", placeholder="例: 80", key=f"days_{seq_key}")
         user_clean = u_in.replace("日", "").replace("日間", "").strip()
 
     elif input_type == "date":
-        u_in = st.text_input("満期日（何月何日）", placeholder="例: 9月13日")
+        u_in = st.text_input("満期日（何月何日）", placeholder="例: 9月13日", key=f"date_{seq_key}")
         user_clean = u_in.replace(" ", "").strip()
 
     elif input_type in ["usd", "eur"]:
         symbol = "€" if input_type == "eur" else "＄"
-        u_in = st.text_input(f"金額（{symbol}）", placeholder="例: 6702.95")
+        u_in = st.text_input(f"金額（{symbol}）", placeholder="例: 6702.95", key=f"fx_{seq_key}")
         user_clean = u_in.replace(",", "").replace("$", "").replace("＄", "").replace("€", "").strip()
 
     else:
-        u_in = st.text_input("金額を入力（￥）", placeholder="例: 3610169")
+        u_in = st.text_input("金額を入力（￥）", placeholder="例: 3610169", key=f"yen_{seq_key}")
         user_clean = u_in.replace(",", "").replace("￥", "").replace("円", "").strip()
 
     if not st.session_state.answered:
